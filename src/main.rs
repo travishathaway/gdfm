@@ -9,7 +9,7 @@ use crate::cli::clean::clean;
 use crate::cli::init::init;
 use crate::cli::report::report;
 use crate::cli::collect::collect;
-use crate::constants::{CLI_ARGS_NAME, CLI_ARGS_REPOS, CLI_ARGS_PATH, CLI_ARGS_YES};
+use crate::constants::{CLI_ARGS_MAINTAINERS, CLI_ARGS_REPO, CLI_ARGS_PATH, CLI_ARGS_YES};
 
 fn cli() -> Command {
     Command::new("gdfm")
@@ -20,14 +20,14 @@ fn cli() -> Command {
             Command::new("init")
                 .about("Initialize a new project")
                 .arg(
-                    Arg::new(CLI_ARGS_NAME)
-                        .help("The name of the project")
+                    Arg::new(CLI_ARGS_REPO)
+                        .help("The repository to track")
                         .required(true)
                         .index(1)
                 )
                 .arg(
-                    Arg::new(CLI_ARGS_REPOS)
-                        .help("The repositories to keep track of")
+                    Arg::new(CLI_ARGS_MAINTAINERS)
+                        .help("The maintainers of the repository")
                         .required(true)
                         .num_args(1..)
                         .index(2)
@@ -60,8 +60,8 @@ fn cli() -> Command {
             Command::new("collect")
                 .about("Collect data for a given project")
                 .arg(
-                    Arg::new(CLI_ARGS_NAME)
-                        .help("The name of the project")
+                    Arg::new(CLI_ARGS_REPO)
+                        .help("The repository to collect data from")
                         .required(true)
                         .index(1)
                 )
@@ -93,22 +93,3 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-
-
-// fn main() -> Result<()> {
-//     let matches = cli().get_matches();
-// 
-//     match matches.subcommand() {
-//         Some(("init", sub_matches)) => {
-//             init(sub_matches)?;
-//         }
-//         Some(("report", sub_matches)) => {
-//             report(sub_matches);
-//         }
-//         _ => {
-//             unreachable!()
-//         }
-//     }
-// 
-//     Ok(())
-// }

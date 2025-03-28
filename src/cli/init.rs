@@ -7,32 +7,33 @@ use console::style;
 use clap::ArgMatches;
 use miette::{Result, IntoDiagnostic};
 
-use crate::constants::CLI_ARGS_NAME;
-use crate::constants::CLI_ARGS_REPOS;
-use crate::database::{setup_db, Project, Repository};
+use crate::constants::CLI_ARGS_MAINTAINERS;
+use crate::constants::CLI_ARGS_REPO;
+use crate::database::{setup_db, Repository, Maintainer};
 
 pub async fn init(matches: &ArgMatches) -> Result<()> {
-    let project_name= matches
-        .get_one::<String>(CLI_ARGS_NAME)
-        .expect("name is required");
+    let repo_path: &String = matches
+        .get_one::<String>(CLI_ARGS_REPO)
+        .expect("repos are required");
 
-    let repo_paths: Vec<&str> = matches
-        .get_many::<String>(CLI_ARGS_REPOS)
-        .expect("repos are required")
+    let maintainers: Vec<&str> = matches
+        .get_many::<String>(CLI_ARGS_MAINTAINERS)
+        .expect("at least one maintainer is required")
         .map(String::as_str)
         .collect();
 
     let pool = setup_db().await.into_diagnostic()?;
 
-    let project = Project::create(&pool, project_name).await.into_diagnostic()?;
+    let maintainers = Maintainer::create_many(&pool, maintainers).await.into_diagnostic()?;
+    let repo = Repository::create(&pool, repo_path).await.into_diagnostic()?;
 
-    let repos = Repository::create_many(&pool, project.id, repo_paths).await.into_diagnostic()?;
+    repo.add_maintainers(&pool, &maintainers).await.into_diagnostic()?;
 
     println!();
-    println!("Project {} is tracking the following GitHub repos:", style(project.name).bold().cyan());
-    
-    for repo in repos {
-        println!("- {}/{}", repo.owner, repo.name);
+    println!("Tracking the following GitHub repo: {}", style(repo_path).bold().cyan());
+    println!("With the following maintainers:");
+    for maintainer in &maintainers {
+        println!(" - {}", style(&maintainer.username).bold().green());
     }
 
     Ok(())

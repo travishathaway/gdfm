@@ -3,9 +3,9 @@
 pub static APP_NAME: &str = "gdfm";
 
 /// CLI Argument names
-pub static CLI_ARGS_NAME: &str = "NAME";
-pub static CLI_ARGS_REPOS: &str = "REPOSITORIES";
+pub static CLI_ARGS_REPO: &str = "REPOSITORY";
 pub static CLI_ARGS_PATH: &str = "PATH";
+pub static CLI_ARGS_MAINTAINERS: &str = "MAINTAINERS";
 pub static CLI_ARGS_YES: &str = "yes";
 
 /// Database constants

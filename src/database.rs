@@ -9,17 +9,16 @@ use sqlx::Pool;
 use crate::constants::{DB_FILE, APP_NAME};
 
 #[derive(Debug, sqlx::FromRow)]
-pub struct Project {
+pub struct Repository {
     pub id: u32,
+    pub owner: String,
     pub name: String,
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub struct Repository {
+pub struct Maintainer {
     pub id: u32,
-    pub project_id: u32,
-    pub name: String,
-    pub owner: String,
+    pub username: String
 }
 
 /// Function used to get the database URI while creating its directory if it doesn't exist
@@ -40,9 +39,9 @@ pub async fn setup_db() -> Result<sqlx::SqlitePool, sqlx::Error> {
     Sqlite::create_database(&db_uri).await?;
     let pool = sqlx::sqlite::SqlitePool::connect(&db_uri).await?;
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS projects (
+        "CREATE TABLE IF NOT EXISTS maintainers (
             id INTEGER PRIMARY KEY,
-            name TEXT NOT NULL UNIQUE
+            username TEXT NOT NULL UNIQUE
         )",
     )
     .execute(&pool)
@@ -51,17 +50,34 @@ pub async fn setup_db() -> Result<sqlx::SqlitePool, sqlx::Error> {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS repositories (
             id INTEGER PRIMARY KEY,
-            project_id INTEGER NOT NULL,
-            name TEXT NOT NULL,
-            owner TEXT NOT NULL
+            owner TEXT NOT NULL,
+            name TEXT NOT NULL
         )",
     )
     .execute(&pool)
     .await?;
 
     sqlx::query(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_repositories_project_id_name 
-            ON repositories (project_id, name, owner)
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_repositories_owner_name 
+            ON repositories (owner, name)
+        ",
+    )
+    .execute(&pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS repository_maintainers (
+            id INTEGER PRIMARY KEY,
+            repo_id INTEGER NOT NULL,
+            maintainer_id INTEGER NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_repository_maintainers_repo_id_maintainer_id 
+            ON repository_maintainers (repo_id, maintainer_id)
         ",
     )
     .execute(&pool)
@@ -77,32 +93,45 @@ pub async fn destroy_db() -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-impl Project {
-    pub async fn from(pool: &Pool<Sqlite>, name: &str) -> Result<Self, sqlx::Error> {
-        let project: Self = sqlx::query_as("SELECT id, name FROM projects WHERE name = $1")
-            .bind(name)
+impl Maintainer {
+    pub async fn from(pool: &Pool<Sqlite>, username: &str) -> Result<Self, sqlx::Error> {
+        let maintainer: Self = sqlx::query_as("SELECT id, username FROM maintainers WHERE username = $1")
+            .bind(username)
             .fetch_one(pool)
             .await?;
 
-        Ok(project)
+        Ok(maintainer)
     }
 
-    pub async fn create(pool: &Pool<Sqlite>, name: &str) -> Result<Self, sqlx::Error> {
-        let id = sqlx::query("INSERT INTO projects (name) VALUES ($1)")
-            .bind(name)
+    pub async fn create(pool: &Pool<Sqlite>, username: &str) -> Result<Self, sqlx::Error> {
+        let id = sqlx::query("INSERT INTO maintainers (username) VALUES ($1)")
+            .bind(username)
             .execute(pool)
             .await?;
 
-        let project: Self = sqlx::query_as("SELECT id, name FROM projects WHERE id = $1")
+        let maintainer: Self = sqlx::query_as("SELECT id, username FROM maintainers WHERE id = $1")
             .bind(id.last_insert_rowid())
             .fetch_one(pool)
             .await?;
 
-        Ok(project)
+        Ok(maintainer)
+    }
+
+    pub async fn create_many(pool: &Pool<Sqlite>, usernames: Vec<&str>) -> Result<Vec<Self>, sqlx::Error> {
+        let mut maintainers = Vec::new();
+
+        for username in usernames {
+            let maintainer = Self::create(pool, username).await?;
+            maintainers.push(maintainer);
+        }
+
+        Ok(maintainers)
     }
 
     pub async fn repositories(&self, pool: &Pool<Sqlite>) -> Result<Vec<Repository>, sqlx::Error> {
-        let repos: Vec<Repository> = sqlx::query_as("SELECT id, project_id, name, owner FROM repositories WHERE project_id = $1")
+        let repos: Vec<Repository> = sqlx::query_as(
+            "SELECT id, name, owner FROM repositories r LEFT JOIN repository_maintainers rm ON r.id = rm.repo_id WHERE rm.maintainer_id = $1"
+        )
             .bind(self.id)
             .fetch_all(pool)
             .await?;
@@ -112,19 +141,31 @@ impl Project {
 }
 
 impl Repository {
-    pub async fn create(pool: &Pool<Sqlite>, project_id: u32, path: &str) -> Result<Self, sqlx::Error> {
-        let name = path.split("/").last().expect("Repository name should exist");
+    pub async fn from(pool: &Pool<Sqlite>, path: &str) -> Result<Self, sqlx::Error> {
         let owner = path.split("/").nth(0).expect("Repository owner should exist");
+        let name = path.split("/").last().expect("Repository name should exist");
+
+        let repository: Self = sqlx::query_as("SELECT id, owner, name FROM repositories WHERE owner = $1 AND name = $2")
+            .bind(owner)
+            .bind(name)
+            .fetch_one(pool)
+            .await?;
+
+        Ok(repository)
+    }
+
+    pub async fn create(pool: &Pool<Sqlite>, path: &str) -> Result<Self, sqlx::Error> {
+        let owner = path.split("/").nth(0).expect("Repository owner should exist");
+        let name = path.split("/").last().expect("Repository name should exist");
 
         let id = sqlx::query(
-            "INSERT INTO repositories (project_id, name, owner) VALUES ($1, $2, $3)")
-            .bind(project_id)
-            .bind(name)
+            "INSERT INTO repositories (owner, name) VALUES ($1, $2)")
             .bind(owner)
+            .bind(name)
             .execute(pool)
             .await?;
 
-        let repository = sqlx::query_as("SELECT id, project_id, name, owner FROM repositories WHERE id = $1")
+        let repository = sqlx::query_as("SELECT id, owner, name FROM repositories WHERE id = $1")
             .bind(id.last_insert_rowid())
             .fetch_one(pool)
             .await?;
@@ -132,13 +173,28 @@ impl Repository {
         Ok(repository)
     }
 
-    pub async fn create_many(pool: &Pool<Sqlite>, project_id: u32, repo_paths: Vec<&str>) -> Result<Vec<Repository>, sqlx::Error> {
-        let mut repos: Vec<Repository> = vec![];
+    pub async fn maintainers(&self, pool: &Pool<Sqlite>) -> Result<Vec<Maintainer>, sqlx::Error> {
+        let maintainers: Vec<Maintainer> = sqlx::query_as(
+            "SELECT id, username FROM maintainers m LEFT JOIN repository_maintainers rm ON m.id = rm.maintainer_id WHERE rm.repo_id = $1"
+        )
+            .bind(self.id)
+            .fetch_all(pool)
+            .await?;
 
-        for repo in repo_paths {
-            repos.push(Self::create(pool, project_id, repo).await?);
+        Ok(maintainers)
+    }
+
+    pub async fn add_maintainers(&self, pool: &Pool<Sqlite>, maintainers: &Vec<Maintainer>) -> Result<(), sqlx::Error> {
+        for maintainer in maintainers {
+            sqlx::query(
+                "INSERT INTO repository_maintainers (repo_id, maintainer_id) VALUES ($1, $2)"
+            )
+            .bind(self.id)
+            .bind(maintainer.id)
+            .execute(pool)
+            .await?;
         }
 
-        Ok(repos)
+        Ok(())
     }
 }
