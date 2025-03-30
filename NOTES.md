@@ -98,3 +98,24 @@ NONE: The author has no association with the repository.
 ```
 
 
+## 2025-03-30
+
+Today I've been working a lot on the code that collects pull request. I wanted to learn how
+to properly do concurrent request, so that took some time, but I think I've got it mostly
+figure out now.
+
+As far as making HTTP requests goes, the only thing I need to do is address the error case for
+The code in `src/cli/collect.rs` is also super unorganized, so I'd like to clean that up a bit.
+
+After I move on from that, I can start saving this stuff to the database which should be a lot
+easier.
+
+### later that day...
+
+Ran into some bad news today. The GitHub rate limit is 5,000 requests per hour, so that means I
+won't be able to make as many requests as I was hoping. This isn't too bad but I will need to
+introduce some option that will let me restrict the size of my queries against the API.
+
+The API calls that really get me are when it comes to fetching events and reviews for individual
+pull requests. I have to perform these queries for each individual pull request which adds up
+quick.

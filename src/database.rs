@@ -2,7 +2,6 @@
 // use rusqlite::{Connection, Error as RusqliteError};
 
 use std::fs::create_dir_all;
-use octocrab::models::pulls::PullRequest as OctoPullRequest;
 use sqlx::migrate::MigrateDatabase;
 use sqlx::sqlite::Sqlite;
 use sqlx::Pool;
@@ -38,7 +37,7 @@ pub struct PullRequest {
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub struct IssuePullEvent {
+pub struct PullRequestEvent {
     pub id: u32,
     pub issue_pull_id: u32,
     pub event_type: String,
@@ -47,7 +46,7 @@ pub struct IssuePullEvent {
 }
 
 #[derive(Debug, sqlx::FromRow)]
-pub struct IssuePullReview {
+pub struct PullRequestReview {
     pub id: u32,
     pub issue_pull_id: u32,
     pub reviewer: String,
@@ -152,6 +151,7 @@ pub async fn setup_db() -> Result<sqlx::SqlitePool, sqlx::Error> {
         issue_pull_id INTEGER NOT NULL,
         event_type TEXT NOT NULL,
         actor TEXT NOT NULL,
+        author_association TEXT NOT NULL,
         created_at TEXT NOT NULL,
         FOREIGN KEY (issue_pull_id) REFERENCES pulls (id) ON DELETE CASCADE
         )",
@@ -308,7 +308,7 @@ impl Repository {
 impl PullRequest {
     pub async fn create(
         pool: &Pool<Sqlite>,
-        pull: &OctoPullRequest,
+        pull: &octocrab::models::pulls::PullRequest,
         repo_id: u32,
     ) -> Result<Self, sqlx::Error> {
         let updated_at = match pull.updated_at {
@@ -327,6 +327,14 @@ impl PullRequest {
             Some(user) => user.login.to_string(),
             None => "".to_string(),
         };
+        let author_association = match &pull.author_association {
+            Some(association) => format!("{:?}", association),
+            None => "".to_string(),
+        };
+        let state = match &pull.state {
+            Some(state) => format!("{:?}", state),
+            None => "".to_string(),
+        };
 
         let id = sqlx::query(
             "INSERT INTO pulls (
@@ -337,13 +345,13 @@ impl PullRequest {
         .bind(repo_id)
         .bind(pull.number.to_string())
         .bind(pull.title.clone().unwrap_or("".to_string()))
-        .bind(format!("{:?}", pull.state))
+        .bind(state)
         .bind(pull.created_at.unwrap().to_string()) // "created_at" should always be set
         .bind(updated_at)
         .bind(closed_at)
         .bind(merged_at)
         .bind(author_login)
-        .bind(format!("{:?}", pull.author_association))
+        .bind(author_association)
         .execute(pool)
         .await?;
 
@@ -359,15 +367,28 @@ impl PullRequest {
     }
 }
 
-impl IssuePullReview {
+impl PullRequestReview {
     pub async fn create(
         pool: &Pool<Sqlite>,
         issue_pull_id: u32,
-        reviewer: &str,
-        state: &str,
-        author_association: &str,
-        submitted_at: &str,
+        review: &octocrab::models::pulls::Review,
     ) -> Result<Self, sqlx::Error> {
+        let reviewer= match &review.user{
+            Some(user) => user.login.to_string(),
+            None => "".to_string(),
+        };
+        let state = match review.state {
+            Some(state) => format!("{:?}", state),
+            None => "".to_string(),
+        };
+        let author_association = match &review.author_association {
+            Some(association) => format!("{:?}", association),
+            None => "".to_string(),
+        };
+        let submitted_at = match review.submitted_at {
+            Some(submitted_at) => submitted_at.to_string(),
+            None => "".to_string(),
+        };
         let id = sqlx::query(
             "INSERT INTO issue_pull_reviews (
                 issue_pull_id, reviewer, state, author_association, submitted_at
@@ -390,5 +411,49 @@ impl IssuePullReview {
         .await?;
 
         Ok(issue_pull_review)
+    }
+}
+
+impl PullRequestEvent {
+    pub async fn create(
+        pool: &Pool<Sqlite>,
+        issue_pull_id: u32,
+        event: &octocrab::models::timelines::TimelineEvent,
+    ) -> Result<Self, sqlx::Error> {
+        let actor = match &event.actor {
+            Some(user) => user.login.to_string(),
+            None => "".to_string(),
+        };
+        let created_at = match event.created_at {
+            Some(created_at) => created_at.to_string(),
+            None => "".to_string(),
+        };
+        let event_type = format!("{:?}", &event.event);
+        let author_association = match &event.author_association {
+            Some(association) => association.clone(),
+            None => "".to_string(),
+        };
+
+        let id = sqlx::query(
+            "INSERT INTO issue_pull_events (
+                issue_pull_id, event_type, actor, author_association, created_at
+            ) VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(issue_pull_id)
+        .bind(event_type)
+        .bind(actor)
+        .bind(author_association)
+        .bind(created_at)
+        .execute(pool)
+        .await?;
+
+        let issue_pull_event: Self = sqlx::query_as(
+            "SELECT id, issue_pull_id, event_type, actor, created_at 
+            FROM issue_pull_events WHERE id = $1",
+        )
+        .bind(id.last_insert_rowid())
+        .fetch_one(pool)
+        .await?;
+        Ok(issue_pull_event)
     }
 }
