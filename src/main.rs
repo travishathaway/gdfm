@@ -45,9 +45,12 @@ fn cli() -> Command {
                 )
                 .arg(
                     Arg::new(CLI_ARGS_NUMBER)
+                        .short('n')
+                        .long(CLI_ARGS_NUMBER)
                         .help("The pull request number")
-                        .required(true)
-                        .index(2)
+                        .action(ArgAction::Set)
+                        .value_parser(is_valid_number)
+                        .num_args(1..),
                 )
                 .arg_required_else_help(true)
         )
@@ -62,9 +65,12 @@ fn cli() -> Command {
                 )
                 .arg(
                     Arg::new(CLI_ARGS_NUMBER)
+                        .short('n')
+                        .long(CLI_ARGS_NUMBER)
                         .help("The pull request number")
-                        .required(true)
-                        .index(2)
+                        .action(ArgAction::Set)
+                        .value_parser(is_valid_number)
+                        .num_args(1..),
                 )
                 .arg_required_else_help(true)
         );
@@ -107,6 +113,14 @@ fn cli() -> Command {
         .subcommand(report)
         .subcommand(clean)
         .subcommand(collect)
+}
+
+pub fn is_valid_number(s: &str) -> Result<u32, String> {
+    if s.parse::<u32>().is_ok() {
+        Ok(s.parse::<u32>().unwrap())
+    } else {
+        Err("Must be a positive integer".to_string())
+    }
 }
 
 #[tokio::main]

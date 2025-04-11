@@ -119,3 +119,12 @@ introduce some option that will let me restrict the size of my queries against t
 The API calls that really get me are when it comes to fetching events and reviews for individual
 pull requests. I have to perform these queries for each individual pull request which adds up
 quick.
+
+
+## 2025-04-11
+
+Today, I want to make it so that I can run the collect commands for events and reviews and
+by default have it collect it for everything currently in the database. I'll need to make
+sure to add a pause between requests, so I don't run into any rate limits (5,000 per hour).
+
+There's 3600 seconds in an hour, so a one-second pause between requests should work!

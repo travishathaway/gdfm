@@ -293,6 +293,32 @@ impl PullRequest {
 
         Ok(pull_request)
     }
+
+    pub async fn fetch_many(pool: &Pool<Sqlite>, repo_id:u32, numbers: &Vec<u32>) -> Result<Vec<Self>, sqlx::Error> {
+        let query_str: String;
+
+        if numbers.is_empty() {
+            query_str = "
+                SELECT id, repo_id, number, title, state, created_at, updated_at, closed_at, merged_at, author, author_association
+                FROM pulls WHERE repo_id = ?".to_string();
+        } else {
+            let params = format!("?{}", ", ?".repeat(numbers.len() - 1));
+            query_str = format!("
+                SELECT id, repo_id, number, title, state, created_at, updated_at, closed_at, merged_at, author, author_association
+                FROM pulls WHERE repo_id = ? AND number IN ( {} )
+            ", params);
+        }
+
+        let mut query = sqlx::query_as(&query_str)
+            .bind(repo_id);
+
+        for number in numbers {
+            query = query.bind(number);
+        }
+        let pull_requests: Vec<PullRequest> = query.fetch_all(pool).await?;
+
+        Ok(pull_requests)
+    }
 }
 
 impl PullRequestReview {

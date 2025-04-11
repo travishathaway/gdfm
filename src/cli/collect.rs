@@ -7,7 +7,7 @@ use miette::{miette, Result, IntoDiagnostic};
 use octocrab::params::State;
 use octocrab::Octocrab;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::time::Duration;
+use tokio::time::{sleep, Duration};
 
 use crate::constants::{
     CLI_ARGS_REPO,
@@ -62,13 +62,13 @@ pub async fn collect_pull_requests(matches: &ArgMatches) -> Result<()> {
                 progress_bar.inc(1);
             }
         }
-        
     } else {
         println!("No pull requests found");
     }
     Ok(())
 }
 
+/// Parses the command line arguments and figures out what operations to perform
 pub async fn collect_pull_events(matches: &ArgMatches) -> Result<()> {
     let github_api_token = std::env::var("GITHUB_TOKEN")
         .map_err(|_| miette!("GitHub token not found. Please set GITHUB_TOKEN environment variable"))?;
@@ -76,39 +76,46 @@ pub async fn collect_pull_events(matches: &ArgMatches) -> Result<()> {
     let project_name= matches
         .get_one::<String>(CLI_ARGS_REPO)
         .expect("repository is required");
-    
-    let number = matches
-        .get_one::<String>(CLI_ARGS_NUMBER)
-        .expect("pull request number is required")
-        .parse::<u32>()
-        .map_err(|_| miette!("Invalid pull request number"))?;
+
+    let pr_numbers = match matches.get_many(CLI_ARGS_NUMBER) {
+        Some(numbers) => numbers.copied().collect(),
+        None => vec![],
+    };
 
     let pool = setup_db().await.into_diagnostic()?;
     let repo = Repository::from(&pool, project_name).await.into_diagnostic()?;
-    let pull = DbPullRequest::fetch(&pool, repo.id, number).await.into_diagnostic()?;
+    let pulls = DbPullRequest::fetch_many(&pool, repo.id, &pr_numbers).await.into_diagnostic()?;
+
+    println!("Length {}: {}", pulls.len(), pr_numbers.len());
+    // Number of numbers provided should match records fetched from the database
+    if !pr_numbers.is_empty() && pulls.len() != pr_numbers.len()  {
+        return Err(miette!("Number of pull requests provided does not match the number of records in the database"));
+    }
 
     let octocrab = Octocrab::builder()
         .personal_token(github_api_token)
         .build()
         .into_diagnostic()?;
 
-    let progress_bar = ProgressBar::new_spinner();
-    progress_bar.set_message("Fetching pull request events");
-    progress_bar.enable_steady_tick(Duration::from_millis(100));
+    let progress_bar = get_progress_bar(pulls.len() as u64, "Fetching pull events");
 
-    let events = octocrab.issues(repo.owner, repo.name)
-        .list_timeline_events(number as u64)
-        .page(1u32)
-        .per_page(100)
-        .send()
-        .await.into_diagnostic()?;
+    for pull in pulls {
+        let events = octocrab.issues(&repo.owner, &repo.name)
+            .list_timeline_events(pull.number as u64)
+            .page(1u32)
+            .per_page(100)
+            .send()
+            .await.into_diagnostic()?;
 
-    for event in events {
-        if event.id.is_some() {
-            PullRequestEvent::create(&pool, pull.id, &event).await.map_err(|err| {
-                miette!("Error creating pull request event db record: {}", err)
-            })?;
+        for event in events {
+            if event.id.is_some() {
+                PullRequestEvent::create(&pool, pull.id, &event).await.map_err(|err| {
+                    miette!("Error creating pull request event db record: {}", err)
+                })?;
+            }
         }
+        progress_bar.inc(1);
+        sleep(Duration::from_millis(1000)).await;
     }
     progress_bar.finish_with_message("Finished fetching pull request events");
 
@@ -122,37 +129,43 @@ pub async fn collect_pull_reviews(matches: &ArgMatches) -> Result<()> {
     let project_name= matches
         .get_one::<String>(CLI_ARGS_REPO)
         .expect("repository is required");
-    
-    let number = matches
-        .get_one::<String>(CLI_ARGS_NUMBER)
-        .expect("pull request number is required")
-        .parse::<u32>()
-        .map_err(|_| miette!("Invalid pull request number"))?;
+
+    let pr_numbers = match matches.get_many(CLI_ARGS_NUMBER) {
+        Some(numbers) => numbers.copied().collect(),
+        None => vec![],
+    };
 
     let pool = setup_db().await.into_diagnostic()?;
     let repo = Repository::from(&pool, project_name).await.into_diagnostic()?;
-    let pull = DbPullRequest::fetch(&pool, repo.id, number).await.into_diagnostic()?;
+    let pulls = DbPullRequest::fetch_many(&pool, repo.id, &pr_numbers).await.into_diagnostic()?;
+
+    // Number of numbers provided should match records fetched from the database
+    if !pr_numbers.is_empty() && pulls.len() != pr_numbers.len()  {
+        return Err(miette!("Number of pull requests provided does not match the number of records in the database"));
+    }
 
     let octocrab = Octocrab::builder()
         .personal_token(github_api_token)
         .build()
         .into_diagnostic()?;
 
-    let progress_bar = ProgressBar::new_spinner();
-    progress_bar.set_message("Fetching pull request reviews");
-    progress_bar.enable_steady_tick(Duration::from_millis(100));
+    let progress_bar = get_progress_bar(pulls.len() as u64, "Fetching pull request reviews");
 
-    let reviews = octocrab.pulls(repo.owner, repo.name)
-        .list_reviews(number as u64)
-        .page(1u32)
-        .per_page(100)
-        .send()
-        .await.into_diagnostic()?;
+    for pull in pulls {
+        let reviews = octocrab.pulls(&repo.owner, &repo.name)
+            .list_reviews(pull.number as u64)
+            .page(1u32)
+            .per_page(100)
+            .send()
+            .await.into_diagnostic()?;
 
-    for review in reviews {
-        PullRequestReview::create(&pool, pull.id, &review).await.map_err(|err| {
-            miette!("Error creating pull request event db record: {}", err)
-        })?;
+        for review in reviews {
+            PullRequestReview::create(&pool, pull.id, &review).await.map_err(|err| {
+                miette!("Error creating pull request event db record: {}", err)
+            })?;
+        }
+        progress_bar.inc(1);
+        sleep(Duration::from_millis(1000)).await;
     }
     progress_bar.finish_with_message("Finished fetching pull request reviews");
 
