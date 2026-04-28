@@ -113,7 +113,7 @@ easier.
 ### later that day...
 
 Ran into some bad news today. The GitHub rate limit is 5,000 requests per hour, so that means I
-won't be able to make as many requests as I was hoping. This isn't too bad but I will need to
+won't be able to make as many requests as I was hoping. This isn't too bad, but I will need to
 introduce some option that will let me restrict the size of my queries against the API.
 
 The API calls that really get me are when it comes to fetching events and reviews for individual
